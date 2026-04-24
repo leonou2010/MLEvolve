@@ -257,6 +257,30 @@ def check_improvement(agent, cur_node: SearchNode, parent_node: SearchNode):
         logger.warning(f"[eval] node {cur_node.id}: improvement=N/A, action=backprop")
         should_backpropagate = True
     else:
+        # Bug Consultant: check if this bug is a dead end — halt branch immediately
+        # Dead ends: timeout/OOM (from is_unfixable detection) OR data leakage (Step 4 of paper)
+        if getattr(agent, 'bug_consultant', None):
+            bug_id = f"bug_{cur_node.step}"
+            bc = agent.bug_consultant
+            is_dead = (bug_id in bc.bug_records and bc.bug_records[bug_id].is_dead) or \
+                      (bug_id in bc.active_bugs and bc.active_bugs[bug_id].is_dead)
+            if is_dead:
+                cur_node.is_terminal = True
+                should_backpropagate = True
+                logger.info(f"[eval] node {cur_node.id}: DEAD END (timeout/OOM) — halting branch")
+
+        # Data leakage = dead end (validity scan, Step 4 of paper)
+        # Gated by consultant flag for clean A/B testing
+        if getattr(agent, 'bug_consultant', None) and cur_node.is_buggy:
+            term_out = getattr(cur_node, 'term_out', '') or ''
+            exc_type = getattr(cur_node, 'exc_type', '') or ''
+            is_leakage = ('leakage' in term_out.lower() or 'OOF' in term_out) and \
+                         exc_type in ('AssertionError', 'ValueError', 'AssertionError')
+            if is_leakage:
+                cur_node.is_terminal = True
+                should_backpropagate = True
+                logger.info(f"[eval] node {cur_node.id}: DEAD END (data leakage) — halting branch")
+
         # Buggy node: check error backtrack threshold before depth-based backtrack
         if should_error_backtrack(cur_node, agent):
             should_backpropagate = True

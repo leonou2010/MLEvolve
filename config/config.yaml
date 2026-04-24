@@ -2,16 +2,16 @@
 #  Data & paths
 # ============================================================
 data_dir: null
-dataset_dir: "/home/aa3320/.cache/mle-bench/data"  # path to mle-bench dataset root, e.g. /data/mle-bench
+dataset_dir: "/home/ka3094/.cache/mle-bench/data"
 desc_file: null
 goal: null
 eval: null
 exp_name: null
 exp_id: ""
 
-log_dir: /mnt/extra/runs  
-log_level: DEBUG  #INFO for no logs              
-workspace_dir: /mnt/extra/runs
+log_dir: /home/ka3094/MLEVOLVE_DEBUG_CONSULTANT_PR/runs
+log_level: INFO
+workspace_dir: /home/ka3094/MLEVOLVE_DEBUG_CONSULTANT_PR/runs
 preprocess_data: True
 copy_data: False
 
@@ -37,7 +37,7 @@ agent:
 
   # --- Basic run params ---
   steps: 500
-  time_limit: 7200           # 2h
+  time_limit: 7200           # 2 hours
   initial_drafts: 3
   seed: 42
   data_preview: True
@@ -60,6 +60,21 @@ agent:
   # --- Code gen mode ---
   use_diff_mode: True                # SEARCH/REPLACE patch
 
+  # --- Bug Consultant (AIDE Debug Consultant delta) ---
+  features:
+    enable_bug_consultant: true        # ON for preflight test
+    bug_consultant:
+      use_in_draft: true              # inject Bug Prevention Alert in draft prompts
+      use_in_improve: true            # inject Bug Prevention Alert in improve prompts
+      use_in_debug: true              # inject Historical Bug Context + Trial History in debug
+      mode: consultant                # consultant | buggy_code | both
+      max_bug_records: 500
+      max_active_bugs: 200
+      max_trials_per_bug: 20
+      advice_budget_chars: 200000
+      model: ""                       # empty => fallback to agent.feedback.model
+      temp: 0.2
+
   # --- Branch strategy ---
   fusion_vs_evolution_prob: 0.3
   branch_fusion_trigger_prob: 1.0
@@ -76,7 +91,7 @@ agent:
   # --------------------------------------------------------
   search:
     # Parallel & resources
-    parallel_search_num: 9
+    parallel_search_num: 1     # preflight: sequential (set to 9 for real runs)
     num_gpus: 0
 
     # Node expansion limits

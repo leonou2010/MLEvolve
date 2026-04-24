@@ -231,9 +231,43 @@ def run(agent, parent_node: SearchNode) -> SearchNode:
     if prompt.get("Memory", "").strip():
         memory_section = f"\n# Memory\nBelow is a record of previous improvement attempts and their outcomes:\n {prompt['Memory']}\n"
 
-    user_prompt = f"\n# Task description\n{prompt['Task description']}{memory_section}\n{instructions}"
+    # Bug Consultant: inject Bug Prevention Alert (matches AIDE placement: after Memory, before Instructions)
+    bug_prevention_section = ""
+    if getattr(agent, 'bug_consultant', None):
+        _bc_features = getattr(agent.acfg, 'features', None)
+        _bc_cfg = getattr(_bc_features, 'bug_consultant', None) if _bc_features else None
+        _bc_mode = getattr(_bc_cfg, 'mode', 'consultant') if _bc_cfg else 'consultant'
+        if getattr(_bc_cfg, 'use_in_improve', True):
+            try:
+                _bc_exec_summary = agent.bug_consultant.get_prevention_guidance(
+                    mode="executive", journal=agent.journal
+                )
+                if _bc_exec_summary and _bc_mode in ("consultant", "both"):
+                    bug_prevention_section = f"\n# Bug Prevention Alert\n{_bc_exec_summary}\n"
+            except Exception:
+                pass
+
+    # Conditional rule: parent-specific warning (highest priority, before global alert)
+    conditional_section = ""
+    if getattr(agent, 'bug_consultant', None) and parent_node:
+        _parent_conditional = agent.bug_consultant.get_conditional_guidance(parent_node.id)
+        if _parent_conditional:
+            conditional_section = (
+                f"\n# Known Latent Bug In This Code\n"
+                f"{_parent_conditional}\n"
+                f"Fix this pattern as part of your improvement.\n"
+            )
+
+    user_prompt = f"\n# Task description\n{prompt['Task description']}{memory_section}{conditional_section}{bug_prevention_section}\n{instructions}"
     assistant_prefix = f"Let me approach this systematically.\nFirst, I'll review the dataset:\n{agent.data_preview}\nThe current solution uses the following code:\n{prompt['Previous solution']['Code']}\nIts output was:\n{output}\nBuilding on this, I'll develop an improved approach."
     prompt_complete = build_chat_prompt_for_model(agent.acfg.code.model, introduction, user_prompt, assistant_prefix)
+
+    # In diff mode, prompt_complete is never sent to the LLM — inject BANNED list into
+    # prompt["Instructions"] so _diff_improve → run_planner picks it up.
+    if agent.acfg.use_diff_mode and bug_prevention_section:
+        prompt["Instructions"]["Bug Prevention Alert"] = [bug_prevention_section]
+    if agent.acfg.use_diff_mode and conditional_section:
+        prompt["Instructions"]["Known Latent Bug In This Code"] = [conditional_section]
 
     parent_node.add_expected_child_count()
 
@@ -327,6 +361,15 @@ def _diff_improve(agent, prompt_base, data_preview, parent_node):
     if not modules and plans:
         planning_result['module'] = list(plans.keys())
 
+    # Bug Consultant: pass BANNED list and conditional rule to code writer (not just planner)
+    bc_alert = prompt_base.get("Instructions", {}).get("Bug Prevention Alert", [])
+    bc_conditional = prompt_base.get("Instructions", {}).get("Known Latent Bug In This Code", [])
+    bc_extra_user = ""
+    if bc_conditional:
+        bc_extra_user += "".join(bc_conditional) if isinstance(bc_conditional, list) else str(bc_conditional)
+    if bc_alert:
+        bc_extra_user += "".join(bc_alert) if isinstance(bc_alert, list) else str(bc_alert)
+
     return diff_generate_and_apply(
         agent_instance=agent,
         planning_result=planning_result,
@@ -334,4 +377,5 @@ def _diff_improve(agent, prompt_base, data_preview, parent_node):
         data_preview=data_preview,
         execution_output=context["execution_output"],
         introduction=_IMPROVE_DIFF_INTRODUCTION,
+        extra_user_sections=bc_extra_user,
     )

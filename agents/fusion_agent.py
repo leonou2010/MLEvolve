@@ -133,9 +133,42 @@ def fuse_two_nodes(agent, source_node: SearchNode, target_node: SearchNode) -> S
     instructions = "\n# Instructions\n\n"
     instructions += compile_prompt_to_md(prompt["Instructions"], 2)
 
-    user_prompt = f"\n# Task description\n{prompt['Task description']}\n\n# Reference Solution\n{prompt['Reference Solution']}\n\n{instructions}"
+    # Bug Consultant: inject Bug Prevention Alert
+    bug_prevention_section = ""
+    if getattr(agent, 'bug_consultant', None):
+        _bc_features = getattr(agent.acfg, 'features', None)
+        _bc_cfg = getattr(_bc_features, 'bug_consultant', None) if _bc_features else None
+        _bc_mode = getattr(_bc_cfg, 'mode', 'consultant') if _bc_cfg else 'consultant'
+        if getattr(_bc_cfg, 'use_in_improve', True):
+            try:
+                _bc_exec_summary = agent.bug_consultant.get_prevention_guidance(
+                    mode="executive", journal=agent.journal
+                )
+                if _bc_exec_summary and _bc_mode in ("consultant", "both"):
+                    bug_prevention_section = f"\n# Bug Prevention Alert\n{_bc_exec_summary}\n"
+            except Exception:
+                pass
+
+    # Conditional rule: parent-specific warning (highest priority, before global alert)
+    conditional_section = ""
+    if getattr(agent, 'bug_consultant', None) and source_node:
+        _parent_conditional = agent.bug_consultant.get_conditional_guidance(source_node.id)
+        if _parent_conditional:
+            conditional_section = (
+                f"\n# Known Latent Bug In This Code\n"
+                f"{_parent_conditional}\n"
+                f"Fix this pattern as part of your improvement.\n"
+            )
+
+    user_prompt = f"\n# Task description\n{prompt['Task description']}\n\n# Reference Solution\n{prompt['Reference Solution']}{conditional_section}{bug_prevention_section}\n\n{instructions}"
     assistant_prefix = f"Let me approach this systematically.\nFirst, I'll review the dataset:\n{agent.data_preview}\nMy current solution:\nPlan: {prompt['Current Solution']['Plan']}\nCode: {prompt['Current Solution']['Code']}\nPerformance: {prompt['Current Solution']['Performance']}\nAnalysis: {prompt['Current Solution']['Analysis']}\nI'll now analyze the reference solution and selectively incorporate its best ideas."
     prompt_complete = build_chat_prompt_for_model(agent.acfg.code.model, introduction, user_prompt, assistant_prefix)
+
+    # In diff mode, inject BANNED list into Instructions so planner and code writer both receive it
+    if agent.acfg.use_diff_mode and bug_prevention_section:
+        prompt["Instructions"]["Bug Prevention Alert"] = [bug_prevention_section]
+    if agent.acfg.use_diff_mode and conditional_section:
+        prompt["Instructions"]["Known Latent Bug In This Code"] = [conditional_section]
 
     if agent.acfg.use_diff_mode:
         try:
@@ -275,9 +308,42 @@ def _fuse_with_multiple_references(
     instructions = "\n# Instructions\n\n"
     instructions += compile_prompt_to_md(prompt["Instructions"], 2)
 
-    user_prompt = f"\n# Task description\n{prompt['Task description']}\n\n# Reference Solutions\n{prompt['Reference Solutions']}\n\n{instructions}"
+    # Bug Consultant: inject Bug Prevention Alert
+    _bc_prevention2 = ""
+    if getattr(agent, 'bug_consultant', None):
+        _bc_features2 = getattr(agent.acfg, 'features', None)
+        _bc_cfg2 = getattr(_bc_features2, 'bug_consultant', None) if _bc_features2 else None
+        _bc_mode2 = getattr(_bc_cfg2, 'mode', 'consultant') if _bc_cfg2 else 'consultant'
+        if getattr(_bc_cfg2, 'use_in_improve', True):
+            try:
+                _bc_summary2 = agent.bug_consultant.get_prevention_guidance(
+                    mode="executive", journal=agent.journal
+                )
+                if _bc_summary2 and _bc_mode2 in ("consultant", "both"):
+                    _bc_prevention2 = f"\n# Bug Prevention Alert\n{_bc_summary2}\n"
+            except Exception:
+                pass
+
+    # Conditional rule: parent-specific warning (highest priority, before global alert)
+    _conditional_section2 = ""
+    if getattr(agent, 'bug_consultant', None) and parent_node:
+        _parent_conditional2 = agent.bug_consultant.get_conditional_guidance(parent_node.id)
+        if _parent_conditional2:
+            _conditional_section2 = (
+                f"\n# Known Latent Bug In This Code\n"
+                f"{_parent_conditional2}\n"
+                f"Fix this pattern as part of your improvement.\n"
+            )
+
+    user_prompt = f"\n# Task description\n{prompt['Task description']}\n\n# Reference Solutions\n{prompt['Reference Solutions']}{_conditional_section2}{_bc_prevention2}\n\n{instructions}"
     assistant_prefix = f"Let me approach this systematically.\nFirst, I'll review the dataset:\n{agent.data_preview}\nMy current solution:\nPlan: {prompt['Current Solution']['Plan']}\nCode: {prompt['Current Solution']['Code']}\nPerformance: {prompt['Current Solution']['Performance']}\nAnalysis: {prompt['Current Solution']['Analysis']}\nI'll now analyze the reference solutions and selectively incorporate the best ideas."
     prompt_complete = build_chat_prompt_for_model(agent.acfg.code.model, introduction, user_prompt, assistant_prefix)
+
+    # In diff mode, inject BANNED list into Instructions so planner and code writer both receive it
+    if agent.acfg.use_diff_mode and _bc_prevention2:
+        prompt["Instructions"]["Bug Prevention Alert"] = [_bc_prevention2]
+    if agent.acfg.use_diff_mode and _conditional_section2:
+        prompt["Instructions"]["Known Latent Bug In This Code"] = [_conditional_section2]
 
     if agent.acfg.use_diff_mode:
         try:
@@ -439,6 +505,10 @@ def _diff_fusion(agent, prompt_base, data_preview, source_node):
             f"I will selectively incorporate the best ideas from this reference."
         )
 
+    # Bug Consultant: pass BANNED list to code writer
+    bc_alert = prompt_base.get("Instructions", {}).get("Bug Prevention Alert", [])
+    bc_extra_user = "".join(bc_alert) if isinstance(bc_alert, list) else str(bc_alert) if bc_alert else ""
+
     return diff_generate_and_apply(
         agent_instance=agent,
         planning_result=planning_result,
@@ -447,6 +517,7 @@ def _diff_fusion(agent, prompt_base, data_preview, source_node):
         execution_output="",
         introduction=_FUSION_DIFF_INTRODUCTION,
         extra_context=extra_context,
+        extra_user_sections=bc_extra_user,
     )
 
 
@@ -489,6 +560,10 @@ def _diff_multi_fusion(agent, prompt_base, data_preview, parent_node):
             f"I will compare them and selectively incorporate the best ideas from the most relevant reference."
         )
 
+    # Bug Consultant: pass BANNED list to code writer
+    bc_alert = prompt_base.get("Instructions", {}).get("Bug Prevention Alert", [])
+    bc_extra_user = "".join(bc_alert) if isinstance(bc_alert, list) else str(bc_alert) if bc_alert else ""
+
     return diff_generate_and_apply(
         agent_instance=agent,
         planning_result=planning_result,
@@ -497,4 +572,5 @@ def _diff_multi_fusion(agent, prompt_base, data_preview, parent_node):
         execution_output="",
         introduction=_MULTI_FUSION_DIFF_INTRODUCTION,
         extra_context=extra_context,
+        extra_user_sections=bc_extra_user,
     )

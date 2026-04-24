@@ -107,6 +107,36 @@ class AgentSearch:
         else:
             logger.info("[AgentSearch] Global memory is disabled by config")
 
+        # Bug Consultant (AIDE Debug Consultant delta)
+        self.bug_consultant = None
+        features = getattr(self.acfg, 'features', None)
+        if features and getattr(features, 'enable_bug_consultant', False):
+            try:
+                from agents.consultant import BugConsultant
+                bc_cfg = features.bug_consultant
+                from pathlib import Path
+                bc_dir = Path(str(self.cfg.workspace_dir)) / "bug_consultant"
+                self.bug_consultant = BugConsultant(
+                    model=bc_cfg.model or self.acfg.feedback.model,
+                    temperature=bc_cfg.temp,
+                    save_dir=bc_dir,
+                    cfg=self.cfg,
+                    max_bug_records=bc_cfg.max_bug_records,
+                    max_active_bugs=bc_cfg.max_active_bugs,
+                    max_trials_per_bug=bc_cfg.max_trials_per_bug,
+                    advice_budget_chars=bc_cfg.advice_budget_chars,
+                )
+                if self.journal.nodes:
+                    self.bug_consultant.ingest_journal(self.journal)
+                logger.info(f"[AgentSearch] Bug consultant enabled at {bc_dir}")
+            except Exception as e:
+                import traceback
+                logger.warning(f"[AgentSearch] Failed to initialize bug consultant: {e}")
+                logger.debug(f"[AgentSearch] Bug consultant initialization traceback: {traceback.format_exc()}")
+                self.bug_consultant = None
+        else:
+            logger.info("[AgentSearch] Bug consultant is disabled by config")
+
         # Log MCTS configuration
         error_threshold = getattr(self.scfg, "error_backtrack_threshold", 0)
         use_thompson = getattr(self.scfg, "use_thompson_sampling", False)
@@ -238,6 +268,34 @@ class AgentSearch:
                         else:
                             self.journal.append(result_node)
 
+                    # Update bug consultant memory after node is in journal
+                    if self.bug_consultant:
+                        try:
+                            self.bug_consultant.learn_from_bug(result_node, journal=self.journal)
+                        except Exception as bc_err:
+                            logger.warning(f"[BugConsultant] learn_from_bug failed: {bc_err}")
+
+                        # Conditional rule: if parent was valid, learn parent-specific pattern
+                        if result_node.is_buggy:
+                            _parent_node = result_node.parent
+                            if _parent_node and not _parent_node.exc_type:  # parent was valid
+                                import difflib
+                                _parent_code = _parent_node.code or ""
+                                _child_code = result_node.code or ""
+                                _diff_lines = list(difflib.unified_diff(
+                                    _parent_code.splitlines(), _child_code.splitlines(),
+                                    lineterm="", n=2
+                                ))
+                                _child_diff = "\n".join(_diff_lines[:150])
+                                _exc_info = result_node.exc_info or {}
+                                _error_msg = _exc_info.get("message", "") if isinstance(_exc_info, dict) else str(_exc_info)
+                                _error_type = result_node.exc_type or ""
+                                threading.Thread(
+                                    target=self.bug_consultant.learn_conditional_rule,
+                                    args=(_parent_node.id, _parent_code, _child_diff, _error_type, _error_msg),
+                                    daemon=True
+                                ).start()
+
             except Exception as e:
                 logger.warning(f"Step failed for parent {parent_node.id}, rolling back expected child count and propagating zero reward.")
                 evaluation.backpropagate(node=parent_node, value=0, add_to_tree=False)
@@ -326,6 +384,34 @@ class AgentSearch:
                 else:
                     self.journal.append(node)
                     logger.info(f"Node {node.id} added to journal")
+
+                    # Update bug consultant memory
+                    if self.bug_consultant:
+                        try:
+                            self.bug_consultant.learn_from_bug(node, journal=self.journal)
+                        except Exception as bc_err:
+                            logger.warning(f"[BugConsultant] learn_from_bug failed: {bc_err}")
+
+                        # Conditional rule: if parent was valid, learn parent-specific pattern
+                        if node.is_buggy:
+                            _deferred_parent = node.parent
+                            if _deferred_parent and not _deferred_parent.exc_type:  # parent was valid
+                                import difflib
+                                _parent_code = _deferred_parent.code or ""
+                                _child_code = node.code or ""
+                                _diff_lines = list(difflib.unified_diff(
+                                    _parent_code.splitlines(), _child_code.splitlines(),
+                                    lineterm="", n=2
+                                ))
+                                _child_diff = "\n".join(_diff_lines[:150])
+                                _exc_info = node.exc_info or {}
+                                _error_msg = _exc_info.get("message", "") if isinstance(_exc_info, dict) else str(_exc_info)
+                                _error_type = node.exc_type or ""
+                                threading.Thread(
+                                    target=self.bug_consultant.learn_conditional_rule,
+                                    args=(_deferred_parent.id, _parent_code, _child_diff, _error_type, _error_msg),
+                                    daemon=True
+                                ).start()
 
             node.pending_execution = False
             solution_manager.update_best_solution(self, node)

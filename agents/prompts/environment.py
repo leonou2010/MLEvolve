@@ -26,5 +26,5 @@ def get_prompt_environment():
     pkg_str = ", ".join([f"`{p}`" for p in pkgs])
 
     return {
-        "Installed Packages": f"Your solution can use any relevant machine learning packages such as: {pkg_str}. Feel free to use any other packages too (all packages are already installed!). ⚠️ CPU-ONLY environment: prefer sklearn, xgboost, lightgbm, or classical machine learning CPU models. Do NOT use CUDA/GPU. Avoid large deep learning models (ResNet, BERT, ViT, etc.) at all costs."
+        "Installed Packages": f"The following packages are available: {pkg_str}. ⚠️ You MUST focus on classic machine learning approaches and refrain from using neural networks. Only CPU-enabled packages are available."
     }

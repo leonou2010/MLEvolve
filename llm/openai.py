@@ -100,7 +100,7 @@ def query(
     model = filtered.get("model", "")
     stage = _stage_config_for_model(cfg, model)
     client = OpenAI(
-        api_key=stage.api_key,
+        api_key=stage.api_key or None,
         base_url=stage.base_url or None,
         timeout=1200.0,
     )
@@ -225,7 +225,7 @@ def generate(
     model = stage.model
     messages = _prompt_to_messages(prompt, model=model)
     client = OpenAI(
-        api_key=stage.api_key,
+        api_key=stage.api_key or None,
         base_url=stage.base_url or None,
         timeout=1200.0,
     )

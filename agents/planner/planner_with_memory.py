@@ -305,10 +305,19 @@ def _build_refine_user_prompt(
         "# Task description",
         prompt_base.get("Task description", ""),
         "",
+    ]
+
+    # Bug Consultant: inject Bug Prevention Alert so banned patterns don't appear in refined plan
+    bc_alert = prompt_base.get("Instructions", {}).get("Bug Prevention Alert", [])
+    bc_extra = "".join(bc_alert) if isinstance(bc_alert, list) else str(bc_alert) if bc_alert else ""
+    if bc_extra:
+        parts.extend([bc_extra, ""])
+
+    parts.extend([
         "# Initial Plan (Stage 1)",
         initial_plan_text,
         "",
-    ]
+    ])
 
     if refinement_guidance:
         parts.extend([refinement_guidance, ""])

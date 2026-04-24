@@ -165,9 +165,25 @@ def run(
         "that combines the best ideas in an innovative way."
     )
 
+    # Bug Consultant: inject Bug Prevention Alert
+    bug_prevention_section = ""
+    if getattr(agent, 'bug_consultant', None):
+        _bc_features = getattr(agent.acfg, 'features', None)
+        _bc_cfg = getattr(_bc_features, 'bug_consultant', None) if _bc_features else None
+        _bc_mode = getattr(_bc_cfg, 'mode', 'consultant') if _bc_cfg else 'consultant'
+        if getattr(_bc_cfg, 'use_in_improve', True):
+            try:
+                _bc_exec_summary = agent.bug_consultant.get_prevention_guidance(
+                    mode="executive", journal=agent.journal
+                )
+                if _bc_exec_summary and _bc_mode in ("consultant", "both"):
+                    bug_prevention_section = f"\n# Bug Prevention Alert\n{_bc_exec_summary}\n"
+            except Exception:
+                pass
+
     user_prompt = (
         f"\n# Task description\n{prompt['Task description']}\n\n"
-        f"# Branch Experiences\n{prompt['Branch Experiences']}\n\n{instructions}"
+        f"# Branch Experiences\n{prompt['Branch Experiences']}{bug_prevention_section}\n\n{instructions}"
     )
     prompt_complete = build_chat_prompt_for_model(agent.acfg.code.model, introduction, user_prompt, assistant_prefix)
 

@@ -104,6 +104,31 @@ class AgentConfig:
     search: SearchConfig
     decay: DecayConfig
     use_diff_mode: bool = True
+    features: "FeaturesConfig" = field(default_factory=lambda: FeaturesConfig())
+
+
+@dataclass
+class BugConsultantFeatureConfig:
+    """Configuration for the AIDE-style Bug Consultant (only used when enabled)."""
+    use_in_draft: bool = True
+    use_in_improve: bool = True
+    use_in_debug: bool = True
+    mode: str = "consultant"
+    max_bug_records: int = 500
+    max_active_bugs: int = 200
+    max_trials_per_bug: int = 20
+    advice_budget_chars: int = 200000
+    model: str = ""
+    temp: float = 0.2
+
+
+@dataclass
+class FeaturesConfig:
+    """Optional features gated by boolean flags (default off)."""
+    enable_bug_consultant: bool = False
+    bug_consultant: BugConsultantFeatureConfig = field(default_factory=BugConsultantFeatureConfig)
+
+
 @dataclass
 class ExecConfig:
     timeout: int

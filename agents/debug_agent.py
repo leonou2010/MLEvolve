@@ -94,6 +94,41 @@ def run(agent, parent_node: SearchNode) -> SearchNode:
 
     introduction = introduction_base
 
+    # ── Bug Consultant: retrieve context BEFORE prompt construction ──
+    _bc_mode = "consultant"
+    _bc_debug_history = ""
+    _bc_active_trials = ""
+    _bc_prevention = ""
+    if getattr(agent, 'bug_consultant', None):
+        _bc_features = getattr(agent.acfg, 'features', None)
+        _bc_cfg = getattr(_bc_features, 'bug_consultant', None) if _bc_features else None
+        _bc_mode = getattr(_bc_cfg, 'mode', 'consultant') if _bc_cfg else 'consultant'
+        if getattr(_bc_cfg, 'use_in_debug', True):
+            try:
+                _bc_full_error = "".join(parent_node._term_out) if parent_node._term_out else parent_node.term_out
+                _bc_retrieval = agent.bug_consultant.retrieve_relevant_context(
+                    current_error_type=parent_node.exc_type or "Unknown",
+                    current_error_msg=_bc_full_error,
+                    current_code=parent_node.code,
+                    original_plan=parent_node.plan or "",
+                )
+                _bc_debug_history = agent.bug_consultant.format_context_for_actor(_bc_retrieval)
+            except Exception:
+                _bc_debug_history = ""
+            try:
+                _bc_active_trials = agent.bug_consultant.format_active_trial_history(
+                    f"bug_{parent_node.step}", max_trials=5
+                )
+            except Exception:
+                _bc_active_trials = ""
+            try:
+                _bc_exec_summary = agent.bug_consultant.get_prevention_guidance(
+                    mode="executive", journal=agent.journal
+                )
+                _bc_prevention = f"\n# Bug Prevention Alert\n{_bc_exec_summary}\n" if _bc_exec_summary else ""
+            except Exception:
+                _bc_prevention = ""
+
     prompt: Any = {
         "Introduction": introduction,
         "Task description": agent.task_desc,
@@ -101,12 +136,26 @@ def run(agent, parent_node: SearchNode) -> SearchNode:
         "Execution output": wrap_code(parent_node.term_out, lang=""),
         "Instructions": {},
     }
+
+    # ── Bug Consultant: inject active trials + BLOCKLIST into Instructions ──
+    _bc_bugfix_guidelines = []
+    if _bc_debug_history and _bc_mode in ("consultant", "both"):
+        _bc_bugfix_guidelines.append(
+            "- BLOCKLIST CHECK: Read 'Historical Bug Context' and 'Current Bug Trial History' - "
+            "those approaches have ALREADY FAILED and WILL CRASH AGAIN if you use them. "
+            "You MUST use a DIFFERENT approach.\n"
+        )
+    _bc_bugfix_guidelines.extend([
+        "- You should write a brief natural language description (2-3 sentences) of how the issue in the previous implementation can be fixed.\n",
+        "- Don't suggest to do EDA.\n",
+        "- Most libraries are stable and available. The bug is not caused by the library version mismatch. **Don't suggest to reinstall the core libraries.** (like pip install torch, pip upgrade transformers, !pip install tensorflow, subprocess.check_call([sys.executable, '-m', 'pip', 'install', 'transformers', 'accelerate', 'pandas', 'torch', 'torchvision']))\n",
+    ])
+
+    if _bc_active_trials:
+        prompt["Instructions"]["Current Bug Trial History"] = _bc_active_trials
+
     prompt["Instructions"] |= {
-        "Bugfix improvement sketch guideline": [
-            "- You should write a brief natural language description (2-3 sentences) of how the issue in the previous implementation can be fixed.\n",
-            "- Don't suggest to do EDA.\n",
-            "- Most libraries are stable and available. The bug is not caused by the library version mismatch. **Don't suggest to reinstall the core libraries.** (like pip install torch, pip upgrade transformers, !pip install tensorflow, subprocess.check_call([sys.executable, '-m', 'pip', 'install', 'transformers', 'accelerate', 'pandas', 'torch', 'torchvision']))\n",
-        ],
+        "Bugfix improvement sketch guideline": _bc_bugfix_guidelines,
     }
     prompt["Instructions"] |= get_impl_guideline_from_agent(agent)
     prompt["Instructions"] |= ROBUSTNESS_GENERALIZATION_STRATEGY
@@ -148,9 +197,30 @@ def run(agent, parent_node: SearchNode) -> SearchNode:
 
     def build_prompt_complete(instructions_with_format, use_full_code_requirement=False):
         current_introduction = introduction_base + (full_code_requirement if use_full_code_requirement else "")
-        user_prompt = f"\n# Task description\n{prompt['Task description']}\n{instructions_with_format}"
+        # Bug Consultant: prepend historical bug context BEFORE task description (matches AIDE placement)
+        _bc_ctx = ""
+        if _bc_debug_history and _bc_mode in ("consultant", "both"):
+            _bc_ctx = f"\n# Historical Bug Context (Curated)\n{_bc_debug_history}\n"
+        _bc_prev = _bc_prevention if _bc_mode in ("consultant", "both") else ""
+        user_prompt = f"{_bc_ctx}\n# Task description\n{prompt['Task description']}{_bc_prev}\n{instructions_with_format}"
         assistant_prefix = f"Let me approach this systematically.\nFirst, I'll review the dataset:\n{agent.data_preview}\nThe code that needs fixing:\n{prompt['Previous (buggy) implementation']}\nThe error/issue encountered:\n{prompt['Execution output']}\nAnalyzing the root cause: {parent_node.analysis}\nI'll now fix this issue."
         return build_chat_prompt_for_model(agent.acfg.code.model, current_introduction, user_prompt, assistant_prefix)
+
+    # Bug Consultant: save debug context artifact (matches AIDE)
+    if getattr(agent, 'bug_consultant', None) and agent.bug_consultant.save_dir:
+        _bc_parts = []
+        if _bc_debug_history:
+            _bc_parts.append(f"## Historical Bug Context\n{_bc_debug_history}")
+        if _bc_active_trials:
+            _bc_parts.append(f"## Current Bug Trial History\n{_bc_active_trials}")
+        if _bc_parts:
+            try:
+                from pathlib import Path
+                _bc_save = Path(str(agent.bug_consultant.save_dir))
+                _bc_save.mkdir(parents=True, exist_ok=True)
+                (_bc_save / f"debug_context_step_{parent_node.step}.md").write_text("\n\n".join(_bc_parts))
+            except Exception:
+                pass
 
     parent_node.add_expected_child_count()
 
