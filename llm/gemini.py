@@ -49,7 +49,15 @@ def compile_prompt_to_md(prompt: PromptType, _header_depth: int = 1) -> str:
     if isinstance(prompt, str):
         return prompt.strip() + "\n"
     elif isinstance(prompt, list):
-        return "\n".join([f"- {s.strip()}" for s in prompt] + ["\n"])
+        parts = []
+        for s in prompt:
+            if isinstance(s, str):
+                parts.append(f"- {s.strip()}")
+            elif isinstance(s, (dict, list)):
+                parts.append(compile_prompt_to_md(s, _header_depth=_header_depth + 1))
+            else:
+                parts.append(f"- {str(s)}")
+        return "\n".join(parts + ["\n"])
 
     out = []
     header_prefix = "#" * _header_depth

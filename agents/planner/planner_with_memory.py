@@ -70,9 +70,22 @@ def generate_initial_plan(
 
     memory_section = f"# Memory\n{prompt_base.get('Memory', '')}"
 
+    # Bug Consultant: inject Bug Prevention Alert + conditional rule so the plan avoids them
+    _instr = prompt_base.get("Instructions", {})
+    _bc_alert = _instr.get("Bug Prevention Alert", [])
+    _bc_alert_str = "".join(_bc_alert) if isinstance(_bc_alert, list) else str(_bc_alert) if _bc_alert else ""
+    _bc_conditional = _instr.get("Known Latent Bug In This Code", [])
+    _bc_conditional_str = "".join(_bc_conditional) if isinstance(_bc_conditional, list) else str(_bc_conditional) if _bc_conditional else ""
+    bc_section = ""
+    if _bc_conditional_str:
+        bc_section += f"{_bc_conditional_str}\n"
+    if _bc_alert_str:
+        bc_section += f"{_bc_alert_str}\n"
+
     user_prompt = (
         f"\n# Task description\n{prompt_base.get('Task description', '')}\n\n"
         f"{memory_section}\n\n"
+        f"{bc_section}"
         f"{instructions}\n"
     )
 
@@ -307,9 +320,14 @@ def _build_refine_user_prompt(
         "",
     ]
 
-    # Bug Consultant: inject Bug Prevention Alert so banned patterns don't appear in refined plan
-    bc_alert = prompt_base.get("Instructions", {}).get("Bug Prevention Alert", [])
+    # Bug Consultant: inject conditional rule + Bug Prevention Alert so both appear in refined plan
+    _instr = prompt_base.get("Instructions", {})
+    bc_conditional = _instr.get("Known Latent Bug In This Code", [])
+    bc_conditional_str = "".join(bc_conditional) if isinstance(bc_conditional, list) else str(bc_conditional) if bc_conditional else ""
+    bc_alert = _instr.get("Bug Prevention Alert", [])
     bc_extra = "".join(bc_alert) if isinstance(bc_alert, list) else str(bc_alert) if bc_alert else ""
+    if bc_conditional_str:
+        parts.extend([bc_conditional_str, ""])
     if bc_extra:
         parts.extend([bc_extra, ""])
 

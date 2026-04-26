@@ -273,7 +273,7 @@ distill_world_model_spec = FunctionSpec(
                     "properties": {
                         "pattern": {
                             "type": "string",
-                            "description": "The banned pattern as text description. Example: \"'sparse' parameter in OneHotEncoder\", \"'verbose' parameter in LGBMClassifier.fit()\", \"'callbacks' parameter in XGBClassifier.fit()\"",
+                            "description": "State what the code must NOT do — use imperative action language, not description of the symptom. Good: \"using 'sparse' parameter in OneHotEncoder\", \"passing 'verbose' to LGBMClassifier.fit()\", \"accessing column 'sat_cnr_l1_mean' which does not exist in dataset\". Bad: \"Missing feature 'sat_cnr_l1_mean'\", \"sparse parameter issue\".",
                         },
                         "error_type": {
                             "type": "string",
@@ -349,6 +349,7 @@ class BugConsultant:
         self.cfg = cfg
         self._write_lock = threading.Lock()
         self.parent_conditional_rules: dict = {}  # {parent_id: str}
+        self._global_conditional_rules: list = []  # all learned conditional rules (global)
 
         self.save_dir = save_dir
         if self.save_dir:
@@ -628,6 +629,8 @@ class BugConsultant:
             if rule:
                 with self._write_lock:
                     self.parent_conditional_rules[parent_id] = rule
+                    if rule not in self._global_conditional_rules:
+                        self._global_conditional_rules.append(rule)
                 logger.info(
                     "[BugConsultant] Learned conditional rule for parent %s: %s",
                     parent_id, rule[:120]
@@ -901,16 +904,19 @@ class BugConsultant:
         content_hash = hashlib.md5(raw_content.encode()).hexdigest()
 
         # Check if cache is valid (content hasn't changed)
-        if self._distilled_content_hash == content_hash and self._distilled_guidance:
-            logger.debug("Using cached distilled guidance (no content change)")
+        with self._write_lock:
+            current_global_rules = list(self._global_conditional_rules)
+        cache_key = (content_hash, len(current_global_rules))
+        if self._distilled_content_hash == cache_key and self._distilled_guidance:
+            logger.debug("Using cached distilled guidance (no content change, %d conditional rules)", len(current_global_rules))
             return self._distilled_guidance
 
         # Distill into DO/DON'T format
         distilled = self._distill_guidance(raw_content)
 
-        # Cache the result with content hash
+        # Cache the result with content hash + conditional rule count
         self._distilled_guidance = distilled
-        self._distilled_content_hash = content_hash
+        self._distilled_content_hash = cache_key
         self._distilled_version = self.world_model_version
 
         # Save to disk
@@ -921,6 +927,14 @@ class BugConsultant:
                 logger.info("Saved distilled guidance to %s", path)
             except Exception as e:
                 logger.error("Failed to save distilled guidance: %s", e)
+
+        # Append global conditional rules so every node sees them
+        if current_global_rules:
+            rules_text = "\n\n⚠️ CONDITIONAL BUG PATTERNS (apply to all future code):\n"
+            for r in current_global_rules:
+                rules_text += f"- {r}\n"
+            distilled = distilled + rules_text
+            self._distilled_guidance = distilled
 
         # Log what's being passed
         logger.info("=== DISTILLED GUIDANCE BEING PASSED ===")
@@ -1004,7 +1018,7 @@ class BugConsultant:
         prompt = {
             "Task": "Extract BANNED PATTERNS from these crash errors",
             "Instructions": [
-                "For each failure, describe the banned pattern as text (e.g., \"'sparse' parameter in OneHotEncoder\")",
+                "For each failure, state what the code must NOT DO in imperative form — not what went wrong, but what action to avoid. Use action verbs: 'accessing X', 'using Y parameter', 'calling Z method'. BAD: 'Missing feature X'. GOOD: 'accessing column X which does not exist in dataset'.",
                 "Include the error type (TypeError, ValueError, etc.)",
                 "ONLY include fix_syntax if it appears in Proven Successes list - no speculation",
                 "fix_syntax should be SHORT code syntax (e.g., 'sparse_output=False')",

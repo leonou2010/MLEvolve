@@ -180,6 +180,10 @@ def run(agent, init_solution_path: Optional[str] = None) -> SearchNode:
             except Exception:
                 pass
 
+    # Also inject into prompt["Instructions"] so stepwise_coder (which copies Instructions) sees it
+    if bug_prevention_section:
+        prompt["Instructions"]["Bug Prevention Alert"] = [bug_prevention_section]
+
     user_prompt = f"\n# Task description\n{prompt['Task description']}{memory_section}{bug_prevention_section}\n{instructions}"
     assistant_prefix = f"Let me approach this systematically.\nFirst, I'll examine the dataset:\n{agent.data_preview}"
     prompt_complete = build_chat_prompt_for_model(
