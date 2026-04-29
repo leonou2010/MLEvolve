@@ -330,9 +330,15 @@ def _diff_evolution(agent, prompt_base, data_preview, parent_node):
             f"then use these insights to make more informed improvements."
         )
 
-    # Bug Consultant: pass BANNED list to code writer (not just planner)
-    bc_alert = prompt_base.get("Instructions", {}).get("Bug Prevention Alert", [])
-    bc_extra_user = "".join(bc_alert) if isinstance(bc_alert, list) else str(bc_alert) if bc_alert else ""
+    # Bug Consultant: pass conditional rule + BANNED list to code writer (not just planner)
+    _instr = prompt_base.get("Instructions", {})
+    bc_conditional = _instr.get("Known Latent Bug In This Code", [])
+    bc_alert = _instr.get("Bug Prevention Alert", [])
+    bc_extra_user = ""
+    if bc_conditional:
+        bc_extra_user += "".join(bc_conditional) if isinstance(bc_conditional, list) else str(bc_conditional)
+    if bc_alert:
+        bc_extra_user += "".join(bc_alert) if isinstance(bc_alert, list) else str(bc_alert)
 
     return diff_generate_and_apply(
         agent_instance=agent,

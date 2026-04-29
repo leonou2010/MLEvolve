@@ -2,16 +2,16 @@
 #  Data & paths
 # ============================================================
 data_dir: null
-dataset_dir: "/home/ka3094/.cache/mle-bench/data"
+dataset_dir: null
 desc_file: null
 goal: null
 eval: null
 exp_name: null
 exp_id: ""
 
-log_dir: /home/ka3094/MLEVOLVE_DEBUG_CONSULTANT_PR/runs
+log_dir: null
 log_level: INFO
-workspace_dir: /home/ka3094/MLEVOLVE_DEBUG_CONSULTANT_PR/runs
+workspace_dir: null
 preprocess_data: True
 copy_data: False
 
@@ -62,7 +62,7 @@ agent:
 
   # --- Bug Consultant (AIDE Debug Consultant delta) ---
   features:
-    enable_bug_consultant: true        # ON for preflight test
+    enable_bug_consultant: false       # set true to enable bug consultant
     bug_consultant:
       use_in_draft: true              # inject Bug Prevention Alert in draft prompts
       use_in_improve: true            # inject Bug Prevention Alert in improve prompts
@@ -91,7 +91,7 @@ agent:
   # --------------------------------------------------------
   search:
     # Parallel & resources
-    parallel_search_num: 1     # preflight: sequential (set to 9 for real runs)
+    parallel_search_num: 9     # set to 1 for sequential preflight runs
     num_gpus: 0
 
     # Node expansion limits
